@@ -17,6 +17,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Free up disk space
+        run: |
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/hostedtoolcache
+          echo "After cleanup:"
+          df -h
+
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
@@ -29,4 +40,6 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: haniehkashfi/serverlessllm:latest
+          tags: |
+            haniehkashfi/serverlessllm:latest
+            haniehkashfi/serverlessllm:v1
