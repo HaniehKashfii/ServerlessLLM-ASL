@@ -1,124 +1,62 @@
-# ---------------------------------------------------------------------------- #
-#  ServerlessLLM                                                               #
-#  Copyright (c) ServerlessLLM Team 2024                                       #
-#                                                                              #
-#  Licensed under the Apache License, Version 2.0 (the "License");             #
-#  you may not use this file except in compliance with the License.            #
-#                                                                              #
-#  You may obtain a copy of the License at                                     #
-#                                                                              #
-#                  http://www.apache.org/licenses/LICENSE-2.0                  #
-#                                                                              #
-#  Unless required by applicable law or agreed to in writing, software         #
-#  distributed under the License is distributed on an "AS IS" BASIS,           #
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.    #
-#  See the License for the specific language governing permissions and         #
-#  limitations under the License.                                              #
-# ---------------------------------------------------------------------------- #
+# -------------------------------
+# Base image with CUDA + Ubuntu 20.04
+# -------------------------------
+FROM nvidia/cuda:12.1.0-base-ubuntu20.04
 
-# Adapted from https://github.com/vllm-project/vllm/blob/23c1b10a4c8cd77c5b13afa9242d67ffd055296b/Dockerfile
-ARG CUDA_VERSION=12.1.1
-#################### BASE BUILD IMAGE ####################
-# prepare basic build environment
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04 AS builder
-ARG CUDA_VERSION=12.1.1
-ARG PYTHON_VERSION=3.10
-ARG TARGETPLATFORM
-ENV DEBIAN_FRONTEND=noninteractive
+# Metadata
+LABEL maintainer="haniehkashfi <haniehkashfi@gmail.com>"
+LABEL description="ServerlessLLM build compatible with RunPod GPUs"
 
-# Install Python and other dependencies
-RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
-    && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
-    && apt-get update -y \
-    && apt-get install -y ccache software-properties-common git curl sudo \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update -y \
-    && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
-    && update-alternatives --set python3 /usr/bin/python${PYTHON_VERSION} \
-    && ln -sf /usr/bin/python${PYTHON_VERSION}-config /usr/bin/python3-config \
-    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} \
-    && python3 --version && python3 -m pip --version
-
-# Set the working directory
-WORKDIR /app
-
-# Build checkpoint store
-ENV TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0"
-COPY sllm_store/requirements-build.txt /app/sllm_store/requirements-build.txt
-RUN cd sllm_store && \
-  pip install -r requirements-build.txt && \
-  pip install setuptools wheel
-
-COPY sllm_store/cmake /app/sllm_store/cmake
-COPY sllm_store/CMakeLists.txt /app/sllm_store/CMakeLists.txt
-COPY sllm_store/csrc /app/sllm_store/csrc
-COPY sllm_store/sllm_store /app/sllm_store/sllm_store
-COPY sllm_store/setup.py /app/sllm_store/setup.py
-COPY sllm_store/pyproject.toml /app/sllm_store/pyproject.toml
-COPY sllm_store/MANIFEST.in /app/sllm_store/MANIFEST.in
-COPY sllm_store/requirements.txt /app/sllm_store/requirements.txt
-COPY sllm_store/README.md /app/sllm_store/README.md
-COPY sllm_store/proto/storage.proto /app/sllm_store/proto/storage.proto
-RUN cd sllm_store && python3 setup.py bdist_wheel
-
-COPY requirements.txt requirements-worker.txt /app/
-COPY pyproject.toml setup.py py.typed /app/
-COPY sllm/backends /app/sllm/backends
-COPY sllm/cli /app/sllm/cli
-COPY sllm/routers /app/sllm/routers
-COPY sllm/schedulers /app/sllm/schedulers
-COPY sllm/*.py /app/sllm/
-COPY README.md /app/
-RUN python3 setup.py bdist_wheel
-
-# Stage 2: Runner with conda environments
-FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-devel
-
-# Set non-interactive installation
-ENV DEBIAN_FRONTEND=noninteractive \
+# -------------------------------
+# Environment setup
+# -------------------------------
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=America/Los_Angeles \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PATH="/root/.local/bin:${PATH}"
 
-# Set the working directory
+# -------------------------------
+# System dependencies
+# -------------------------------
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        tzdata ca-certificates curl git sudo build-essential \
+        python3 python3-dev python3-venv python3-distutils python3-pip && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
+    python3 --version && python3 -m pip --version && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# -------------------------------
+# Install ServerlessLLM and its store
+# -------------------------------
 WORKDIR /app
+COPY . /app
 
-# Create conda environments for head and worker
-RUN conda create -n head python=3.10 -y && \
-    conda create -n worker python=3.10 -y
+# Install Python dependencies (pip >= 23)
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -e ./sllm_store && \
+    pip install -e . && \
+    pip install ".[worker]" && \
+    pip cache purge
 
-RUN conda run -n head pip install -U pip
-RUN conda run -n worker pip install -U pip
+# -------------------------------
+# Runtime environment variables
+# -------------------------------
+ENV CUDA_VISIBLE_DEVICES=0
+ENV SLLM_STORE_PATH=/app/models
+ENV RAY_DISABLE_DASHBOARD=1
 
-# Copy requirements files
-COPY requirements.txt /app/
+# -------------------------------
+# Expose relevant ports
+# -------------------------------
+EXPOSE 8343 8073 6379 8265
 
-RUN conda run -n head pip install -r /app/requirements.txt
-COPY requirements-worker.txt /app/
-
-RUN conda run -n worker pip install -r /app/requirements-worker.txt
-
-# Copy vllm patch for worker
-COPY sllm_store/vllm_patch /app/vllm_patch
-
-# Copy the built wheels from the builder
-COPY --from=builder /app/sllm_store/dist /app/sllm_store/dist
-COPY --from=builder /app/dist /app/dist
-
-# Install packages in head environment
-RUN conda run -n head pip install /app/sllm_store/dist/*.whl && \
-    conda run -n head pip install /app/dist/*.whl
-
-# Install packages in worker environment
-RUN conda run -n worker pip install /app/sllm_store/dist/*.whl && \
-    conda run -n worker pip install /app/dist/*.whl
-
-# Apply vLLM patch in worker environment
-RUN conda run -n worker bash -c "cd /app && ./vllm_patch/patch.sh"
-
-# Copy the entrypoint
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
-
-# Set the entrypoint directly to the entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
+# -------------------------------
+# Default command
+# -------------------------------
+CMD ["bash", "-c", "\
+sllm-store start --host 0.0.0.0 --port 8073 & \
+ray start --head --port=6379 --num-cpus=4 --num-gpus=1 --resources='{\"control_node\": 1, \"worker_node\": 1, \"worker_id_0\": 1}' --block & \
+sleep 5 && \
+sllm start --host 0.0.0.0 --port 8343 \
+"]
