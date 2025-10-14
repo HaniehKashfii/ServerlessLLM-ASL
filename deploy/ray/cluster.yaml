@@ -1,0 +1,43 @@
+# Ray cluster configuration targeting a small multi-node GPU environment.
+cluster_name: serverless-llm-cluster
+max_workers: 4
+upscaling_speed: 1.0
+auth:
+  ssh_user: ubuntu
+provider:
+  type: aws
+  region: us-west-2
+  availability_zone: us-west-2a
+  cache_stopped_nodes: False
+available_node_types:
+  ray.head.default:
+    resources: {"CPU": 8, "GPU": 1}
+    node_config:
+      InstanceType: g5.2xlarge
+    min_workers: 0
+    max_workers: 0
+  ray.worker.small:
+    resources: {"CPU": 8, "GPU": 1}
+    node_config:
+      InstanceType: g5.2xlarge
+    min_workers: 0
+    max_workers: 4
+defaults:
+  run_env: docker
+  docker:
+    image: "rayproject/ray-ml:2.10.0-py310"
+    container_name: "serverless-llm-ray"
+    pull_before_run: True
+    run_options:
+      - "--ulimit=memlock=-1"
+      - "--shm-size=8G"
+file_mounts: {}
+cluster_synced_files:
+  - .
+initialization_commands:
+  - pip install -r requirements.txt
+setup_commands: []
+head_setup_commands:
+  - echo "Bootstrapping Ray head"
+worker_setup_commands:
+  - echo "Bootstrapping Ray worker"
