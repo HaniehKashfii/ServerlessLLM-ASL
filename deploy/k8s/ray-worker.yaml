@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-worker
+  labels:
+    app: serverless-llm
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: ray-worker
+  template:
+    metadata:
+      labels:
+        app: serverless-llm
+        component: ray-worker
+    spec:
+      containers:
+        - name: ray-worker
+          image: rayproject/ray-ml:2.10.0-py310
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+          args:
+            - "ray"
+            - "start"
+            - "--address=ray-head:6379"
+            - "--num-cpus=8"
+            - "--num-gpus=1"
+          resources:
+            limits:
+              cpu: "8"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            requests:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

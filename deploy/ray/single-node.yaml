@@ -1,0 +1,27 @@
+# Ray cluster configuration for a single-node development setup.
+cluster_name: serverless-llm-single
+provider:
+  type: local
+  head_ip: 127.0.0.1
+  worker_ips: []
+available_node_types:
+  head_node:
+    node_config: {}
+    resources: {"CPU": 8, "GPU": 1}
+    min_workers: 0
+    max_workers: 0
+    worker_setup_commands: []
+  worker_node:
+    node_config: {}
+    resources: {"CPU": 8, "GPU": 1}
+    min_workers: 0
+    max_workers: 0
+initialization_commands:
+  - pip install -r requirements.txt
+setup_commands: []
+head_setup_commands:
+  - echo "Starting Ray head node"
+  - ray stop --force || true
+  - |
+    ray start --head --port=6379 --dashboard-host=0.0.0.0 \
+      --num-cpus=8 --num-gpus=1
